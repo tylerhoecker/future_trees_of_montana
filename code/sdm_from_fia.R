@@ -1,16 +1,15 @@
 # ------------------------------------------------------------------------------
-# Info
-# ------------------------------------------------------------------------------
-# This script draws heavily on the tutorials provided by the rFIA packages authors: https://rfia.netlify.app/tutorial/
-# FIA guide will be helpful: https://www.fia.fs.fed.us/library/database-documentation/current/ver80/FIADB%20User%20Guide%20P2_8-0.pdf
-
-# ------------------------------------------------------------------------------
 # Setup
 # ------------------------------------------------------------------------------
-# Make sure your working directory is 'future_trees_of_montana'
-getwd()
-# This will automatically be the case if you downloaded the GitHub Repo and
-# opened the script from that directory.
+# This script will work best if you download/clone the entire GitHub repo where it lives: 
+# https://github.com/tylerhoecker/future_trees_of_montana/
+
+# Otherwise, the script assumes it is stored in a directory called 'code' and that
+# there is another directory at the same level called 'data'. 
+# The root directory (`future_trees_of_montana`) could be named anything 
+# Example:
+# - future_trees_of_montana/code/sdm_from_fia.R
+# - future_trees_of_montana/data/
 
 # Install missing packages and load them
 using <- function(...) {
@@ -28,6 +27,7 @@ using('tidyverse','sf','tmap','rFIA','USAboundaries','raster','terra','GGally')
 # ------------------------------------------------------------------------------
 # Download FIA data - only run once
 # ------------------------------------------------------------------------------
+# FIA guide will be helpful: https://www.fia.fs.fed.us/library/database-documentation/current/ver80/FIADB%20User%20Guide%20P2_8-0.pdf
 # FIA data are organized by state, so let's specify a few likely states to pull from
 fia_states <- c('ID','MT') 
 
@@ -35,7 +35,7 @@ fia_states <- c('ID','MT')
 # This package give us the option to save downloaded datasets in a specified directory
 # This saves time of downloading the data every time
 # We are downloading all of the TABLES, later we can read in specific TABLES
-getFIA(states = fia_states, dir = '../data') # Note that '../' means do up one directory
+getFIA(states = fia_states, dir = '../data') # Note that '../' means go up one directory
 
 # Explore the structure of FIA data that is automatically printed after we download
 # Which tables should we focus on?
@@ -68,7 +68,7 @@ spp_ref <- read_csv('../data/REF_SPECIES.csv')
 # Make a simplified df with code and common
 spp_names <- dplyr::select(spp_ref, SPCD, COMMON_NAME)
 
-# Which species are present as seedlings in Montana?
+# Which species are present as seedlings in these states?
 # Let's see which are more or less abundant
 left_join(fia_df_seed, spp_names) %>% 
   group_by(SPCD, COMMON_NAME) %>% 
@@ -85,7 +85,7 @@ left_join(fia_df_seed, spp_names) %>%
 fia_juos <- fia_df_seed %>% 
   # Create a special indicator column - this will be response in binomial model
   mutate(JUOS_PRES = ifelse(SPCD == 65, 1, 0)) %>% 
-  # Group by PLT_CN (there are multiple rows, for each species in the plot)
+  # Group by PLT_CN (bit confusing... but PLT_CN will link us to CN in the PLOT table, which is the unique visit ID)
   group_by(PLOT, PLT_CN) %>% 
   # Max of presence indicator will summarize whether JUOS present in each plot
   summarise(JUOS_PRES = as.factor(max(JUOS_PRES)))
@@ -94,7 +94,7 @@ fia_juos <- fia_df_seed %>%
 # ------------------------------------------------------------------------------
 #  Map plots with seedlings of species of interest
 # ------------------------------------------------------------------------------
-# Get the location information associated with these plotsplot information ()
+# Get the location information associated with these plots
 juos_plot_coords <- fia_df[['PLOT']] %>% 
   dplyr::select(CN, PLOT, INVYR, LAT, LON) %>% 
   left_join(fia_juos, ., by = c('PLT_CN' = 'CN', 'PLOT'='PLOT'))
@@ -102,10 +102,11 @@ juos_plot_coords <- fia_df[['PLOT']] %>%
 # Make this a spatial object
 juos_sf  <- st_as_sf(juos_plot_coords, coords = c('LON','LAT'), crs = 4326) # coords must be in x, y order!
 
-# Get us state boundaries to make maps more interpretable
+# Get US state boundaries to make maps more interpretable
 state_bounds <- us_states(map_date = NULL, resolution = c("low"), states = NULL)
 
 # Map... looks reasonable?
+# Learn more about tmap: https://github.com/r-tmap/tmap
 tm_shape(state_bounds, bbox = juos_sf) +
   tm_borders() +
   tm_fill(col = 'grey90') +
@@ -121,10 +122,10 @@ tm_shape(state_bounds, bbox = juos_sf) +
 # ------------------------------------------------------------------------------
 # Use the `getdata` function in raster to download data from WorldClim
 # WorldClim provides 19 'biologically meaningful' variables: https://www.worldclim.org/data/bioclim.html
-#bio_hist <- raster::getData('worldclim', var = 'bio', res = 2.5, path = '../data/')
+bio_hist <- raster::getData('worldclim', var = 'bio', res = 2.5, path = '../data/')
 
 # Once downloaded, read in like this (I changed the name of the directory manually)
-bio_hist <- list.files('../data/worldclim_hist/', 
+bio_hist <- list.files('../data/wc2-5/', 
                        pattern = '*.bil$', 
                        full.names = T) %>% 
   stack()
