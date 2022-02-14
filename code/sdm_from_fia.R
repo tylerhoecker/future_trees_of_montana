@@ -24,12 +24,30 @@ using <- function(...) {
 
 using('tidyverse','sf','tmap','rFIA','USAboundaries','raster','terra','GGally')
 
+
+# ------------------------------------------------------------------------------
+# Pick out your focal species - do some a priori learnin'
+# ------------------------------------------------------------------------------
+foc_sp <- 'Picea pungens'
+
+# Example:
+# Picea pungens (blue spruce): https://pubs.usgs.gov/pp/p1650-a/pages/pipushrt.pdf 
+
+# Look at these maps from the USFS to determine which states data you will likely need
+# Group 1
+# Juniperus osteosperma (Utah juniper): https://pubs.usgs.gov/pp/p1650-a/pages/juostrim.pdf
+# Group 2
+# Quercus gambellii (Gambel oak): https://pubs.usgs.gov/pp/p1650-a/pages/gambtrim.pdf 
+# Group 3
+# Pinus edulis (pinyon pine): https://pubs.usgs.gov/pp/p1650-a/pages/piedtrim.pdf 
+
+
 # ------------------------------------------------------------------------------
 # Download FIA data - only run once
 # ------------------------------------------------------------------------------
 # FIA guide will be helpful: https://www.fia.fs.fed.us/library/database-documentation/current/ver80/FIADB%20User%20Guide%20P2_8-0.pdf
-# FIA data are organized by state, so let's specify a few likely states to pull from
-fia_states <- c('ID','MT') 
+# FIA data are organized by state, so put in the ones where your species occurs:
+fia_states <- c('WY','UT','CO','NM') 
 
 # Use `getFIA` to download data... did not make object, just saving to data directory
 # This package give us the option to save downloaded datasets in a specified directory
@@ -58,6 +76,7 @@ fia_df[['SEEDLING']] %>%
 # Save this table as a dataframe
 fia_df_seed <- fia_df[['SEEDLING']]
 
+# Get information about species names...
 # Download the species reference table from here: https://apps.fs.usda.gov/fia/datamart/CSV/datamart_csv.html
 # Note that you don't include 'REF_' at the beginning of the table name, and use 'ref' for states
 # We just saved this to our data directory, but didn't read it in
@@ -65,13 +84,15 @@ getFIA(states = 'ref', tables = c('SPECIES'), dir = '../data')
 
 # Let's read this in as a CSV
 spp_ref <- read_csv('../data/REF_SPECIES.csv')
-# Make a simplified df with code and common
-spp_names <- dplyr::select(spp_ref, SPCD, COMMON_NAME)
+# Make a simplified df with code and common name, species, genus
+spp_names <- dplyr::select(spp_ref, SPCD, COMMON_NAME, GENUS, SPECIES) %>% 
+  mutate(latin_name = paste(GENUS, SPECIES))
+# Match our focal species latin name to it's code 
+foc_spcd <- filter(spp_names, latin_name == foc_sp)[['SPCD']]
 
-# Which species are present as seedlings in these states?
-# Let's see which are more or less abundant
+# Check how many records of this species are present in the FIA databases from these states 
 left_join(fia_df_seed, spp_names) %>% 
-  group_by(SPCD, COMMON_NAME) %>% 
+  group_by(SPCD, COMMON_NAME, latin_name) %>% 
   tally(sort = TRUE) %>% 
   View()
 
@@ -79,44 +100,56 @@ left_join(fia_df_seed, spp_names) %>%
 # ------------------------------------------------------------------------------
 #  Create presence-absence data for a species of interest
 # ------------------------------------------------------------------------------
-# Let's focus on Utah juniper (Juniperus osteosperma) SPCD = 65
+# Recall that we just saved the FIA species code (SPCD) of our focal species
+foc_sp
+foc_spcd
 
-# Create a simplified dataframe of JUOS presence or absence at each plot
-fia_juos <- fia_df_seed %>% 
-  # Create a special indicator column - this will be response in binomial model
-  mutate(JUOS_PRES = ifelse(SPCD == 65, 1, 0)) %>% 
+# Create a simplified dataframe of foc_sp presence or absence at FIA plots
+fia_foc_sp <- fia_df_seed %>% 
+  # Each row indicates a subplot where the species is present
+  # Create a presence/absense indicator column - this will be response in binomial model
+  mutate(foc_sp_PRES = ifelse(SPCD == foc_spcd, 1, 0)) %>% 
   # Group by PLT_CN (bit confusing... but PLT_CN will link us to CN in the PLOT table, which is the unique visit ID)
   group_by(PLOT, PLT_CN) %>% 
-  # Max of presence indicator will summarize whether JUOS present in each plot
-  summarise(JUOS_PRES = as.factor(max(JUOS_PRES)))
+  # Max of presence indicator will summarize whether foc_sp present in each plot
+  summarise(foc_sp_PRES = as.factor(max(foc_sp_PRES)))
 
 
 # ------------------------------------------------------------------------------
 #  Map plots with seedlings of species of interest
 # ------------------------------------------------------------------------------
+
 # Get the location information associated with these plots
-juos_plot_coords <- fia_df[['PLOT']] %>% 
+foc_sp_plot_coords <- fia_df[['PLOT']] %>% 
   dplyr::select(CN, PLOT, INVYR, LAT, LON) %>% 
-  left_join(fia_juos, ., by = c('PLT_CN' = 'CN', 'PLOT'='PLOT'))
+  # Join our presence/absense data to a list of plots and their coordinates
+  # Why left_join?
+  left_join(fia_foc_sp, ., by = c('PLT_CN' = 'CN', 'PLOT'='PLOT')) 
 
 # Make this a spatial object
-juos_sf  <- st_as_sf(juos_plot_coords, coords = c('LON','LAT'), crs = 4326) # coords must be in x, y order!
+foc_sp_sf  <- st_as_sf(foc_sp_plot_coords, coords = c('LON','LAT'), crs = 4326) # coords must be in x, y order!
 
 # Get US state boundaries to make maps more interpretable
 state_bounds <- us_states(map_date = NULL, resolution = c("low"), states = NULL)
 
 # Map... looks reasonable?
-# Learn more about tmap: https://github.com/r-tmap/tmap
-tm_shape(state_bounds, bbox = juos_sf) +
+# Check against the USFS maps...link above
+tm_shape(state_bounds, bbox = foc_sp_sf) +
   tm_borders() +
   tm_fill(col = 'grey90') +
-  tm_shape(juos_sf) +
-  tm_dots(col = 'JUOS_PRES',
-          size = 0.08,
-          palette = c("grey10", "red"), 
-          alpha = 0.5) 
+  tm_shape(foc_sp_sf) +
+  tm_dots(col = 'grey30') +
+  tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
+  tm_dots(col = 'red', border.col = 'black', size = 0.3, shape = 21, alpha = 0.7)
 
-
+# Learn more about tmap: https://github.com/r-tmap/tmap
+tm_shape(state_bounds, bbox = foc_sp_sf) +
+  tm_borders() +
+  tm_fill(col = 'grey90') +
+  tm_shape(foc_sp_sf) +
+  tm_dots(col = 'foc_sp_PRES', 
+          palette = c('grey30','red')) 
+  
 # ------------------------------------------------------------------------------
 #  Extract and explore climate data for this species
 # ------------------------------------------------------------------------------
@@ -130,26 +163,28 @@ bio_hist <- list.files('../data/wc2-5/',
                        full.names = T) %>% 
   stack()
 
-juos_bio <- terra::extract(bio_hist, juos_sf)
+# This can be slow, you may decide to save this as a Rdata object for quick access later
+foc_sp_bio <- terra::extract(bio_hist, foc_sp_sf)
 
 # Select some climate variables... this is important and there are lots of ways to do it
 # This is just a simplified example, picking a priori and checking for autocorrelation
-juos_bio %>% 
+# See function ggpairs for pairwise scatterplots... might be useful... could cbind presence/absence too
+foc_sp_bio %>% 
   ggcorr(label = TRUE)
 
 
-juos_hist_sf <- juos_bio %>% 
+foc_sp_hist_sf <- foc_sp_bio %>% 
   as.data.frame() %>% 
   dplyr::select(temp_min = bio6, temp_seas = bio4, precip_dry = bio17) %>% 
-  cbind(juos_sf, .) %>% 
+  cbind(foc_sp_sf, .) %>% 
   mutate(temp_min = temp_min,
          temp_seas = temp_seas)
 
 # Map... looks reasonable?
 climate_map <- 
-  tm_shape(state_bounds, bbox = juos_hist_sf) +
+  tm_shape(state_bounds, bbox = foc_sp_hist_sf) +
   tm_fill(col = 'grey60') +
-  tm_shape(juos_hist_sf) +
+  tm_shape(foc_sp_hist_sf) +
   tm_dots(col = 'precip_dry', 
           size = 0.09, 
           palette = 'BrBG',
@@ -157,7 +192,7 @@ climate_map <-
           style = 'cont') +
   tm_shape(state_bounds) +
   tm_borders(col = 'black') +
-  tm_shape(filter(juos_sf, JUOS_PRES == 1)) +
+  tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
   tm_dots(size = 0.12, shape = 1, border.lwd = 1.6) 
 climate_map
 
@@ -169,20 +204,20 @@ climate_map
 # the lastest and greatest best practices.
 
 # Make a non-spatial dataframe 
-juos_hist_df <- juos_hist_sf %>% 
+foc_sp_hist_df <- foc_sp_hist_sf %>% 
   st_drop_geometry() %>% 
-  mutate(presence = as.numeric(as.character(JUOS_PRES)))
+  mutate(presence = as.numeric(as.character(foc_sp_PRES)))
 
 
 # Fit a model
-juos_glm <- glm(presence ~ temp_min + temp_seas + precip_dry, 
-               data = juos_hist_df,
-               family = binomial(link = "logit"))
+foc_sp_glm <- glm(presence ~ temp_min + temp_seas + precip_dry, 
+                data = foc_sp_hist_df,
+                family = binomial(link = "logit"))
 
-summary(juos_glm)
+summary(foc_sp_glm)
 
-# Needs work...
-ggplot(juos_hist_df, aes(x = temp_seas, y = presence)) +
+# Needs work... but shouled evaluate response curves
+ggplot(foc_sp_hist_df, aes(x = temp_seas, y = presence)) +
   geom_point() +
   geom_smooth(method = 'glm', 
               se = F, 
@@ -191,15 +226,20 @@ ggplot(juos_hist_df, aes(x = temp_seas, y = presence)) +
 # Predict historical across space
 hist_preds <- bio_hist[[c('bio6','bio4','bio17')]]
 names(hist_preds) <- c('temp_min','temp_seas','precip_dry')
-hist_preds <- terra::crop(hist_preds, juos_sf)
-hist_space <- terra::predict(hist_preds, model = juos_glm, type = 'response')
+
+# Add Montana state boundary to crop the future prediction
+pred_bounds <- us_states(map_date = NULL, resolution = c("low"), states = c('ID','MT',fia_states))
+
+hist_preds <- terra::crop(hist_preds, pred_bounds)
+hist_space <- terra::predict(hist_preds, model = foc_sp_glm, type = 'response')
 
 hist_map <- 
-  tm_shape(hist_space, bbox = juos_hist_sf, raster.downsample = FALSE) +
-  tm_raster(palette = 'YlOrRd', style = 'cont') +
+  tm_shape(hist_space, bbox = pred_bounds, raster.downsample = FALSE) +
+  tm_raster(title = 'Historical probability',
+            palette = 'PuRd', style = 'cont') +
   tm_shape(state_bounds) +
   tm_borders(col = 'black') +
-  tm_shape(filter(juos_sf, JUOS_PRES == 1)) +
+  tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
   tm_dots(size = 0.12, shape = 1, border.lwd = 1.6) 
 hist_map
 
@@ -225,32 +265,37 @@ bio_cmip5 <- list.files('../data/cmip5/2_5m/',
   `names<-` (names(bio_hist))
 
 
-juos_cmip5 <- terra::extract(bio_cmip5, juos_sf)
+foc_sp_cmip5 <- terra::extract(bio_cmip5, foc_sp_sf)
 
 cmip5_preds <- bio_cmip5[[c('bio6','bio4','bio17')]]
 names(cmip5_preds) <- c('temp_min','temp_seas','precip_dry')
-cmip5_preds <- terra::crop(cmip5_preds, juos_sf)
-cmip5_space <- terra::predict(cmip5_preds, model = juos_glm, type = 'response')
+cmip5_preds <- terra::crop(cmip5_preds, pred_bounds)
+cmip5_space <- terra::predict(cmip5_preds, model = foc_sp_glm, type = 'response')
 
 cmip5_map <- 
-  tm_shape(cmip5_space, bbox = juos_cmip5_sf) +
-  tm_raster(palette = 'YlOrRd', style = 'cont') +
+  tm_shape(cmip5_space, bbox = pred_bounds) +
+  tm_raster(title = 'Future probability',
+            palette = 'PuRd', style = 'cont') +
   tm_shape(state_bounds) +
   tm_borders(col = 'black') +
-  tm_shape(filter(juos_sf, JUOS_PRES == 1)) +
+  tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
   tm_dots(size = 0.12, shape = 1, border.lwd = 1.6) 
 cmip5_map
 
+# Arrow between historical and future to get a eyeball sense of differences
 
 # Map difference between historical and future
 sdm_difference <- cmip5_space - hist_space
 
 diff_map <- 
-  tm_shape(cmip5_space, bbox = juos_cmip5_sf) +
-  tm_raster(palette = 'cividis', style = 'cont') +
+  tm_shape(sdm_difference, bbox = pred_bounds) +
+  tm_raster(title = 'Difference in probability',
+            palette = 'RdGy', 
+            style = 'cont', 
+            breaks = seq(-.05, .05, by=.01)) +
   tm_shape(state_bounds) +
   tm_borders(col = 'black') +
-  tm_shape(filter(juos_sf, JUOS_PRES == 1)) +
+  tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
   tm_dots(size = 0.12, shape = 1, border.lwd = 1.6) 
 diff_map
 
