@@ -22,7 +22,7 @@ using <- function(...) {
   }
 }
 
-using('tidyverse','sf','tmap','rFIA','USAboundaries','raster','terra','GGally')
+using('tidyverse','sf','tmap','rFIA','USAboundaries','raster','terra','GGally','rgdal')
 
 
 # ------------------------------------------------------------------------------
@@ -53,7 +53,7 @@ fia_states <- c('WY','UT','CO','NM')
 # This package give us the option to save downloaded datasets in a specified directory
 # This saves time of downloading the data every time
 # We are downloading all of the TABLES, later we can read in specific TABLES
-getFIA(states = fia_states, dir = '../data') # Note that '../' means go up one directory
+getFIA(states = fia_states, dir = '../data', tables = c('PLOT','SEEDLING')) # Note that '../' means go up one directory
 
 # Explore the structure of FIA data that is automatically printed after we download
 # Which tables should we focus on?
@@ -73,6 +73,7 @@ fia_df <- readFIA(dir = '../data',
 fia_df[['SEEDLING']] %>% 
   glimpse()
 
+
 # Save this table as a dataframe
 fia_df_seed <- fia_df[['SEEDLING']]
 
@@ -85,7 +86,8 @@ getFIA(states = 'ref', tables = c('SPECIES'), dir = '../data')
 # Let's read this in as a CSV
 spp_ref <- read_csv('../data/REF_SPECIES.csv')
 # Make a simplified df with code and common name, species, genus
-spp_names <- dplyr::select(spp_ref, SPCD, COMMON_NAME, GENUS, SPECIES) %>% 
+spp_names <- spp_ref %>% 
+  dplyr::select(SPCD, COMMON_NAME, GENUS, SPECIES) %>% 
   mutate(latin_name = paste(GENUS, SPECIES))
 # Match our focal species latin name to it's code 
 foc_spcd <- filter(spp_names, latin_name == foc_sp)[['SPCD']]
@@ -94,7 +96,7 @@ foc_spcd <- filter(spp_names, latin_name == foc_sp)[['SPCD']]
 left_join(fia_df_seed, spp_names) %>% 
   group_by(SPCD, COMMON_NAME, latin_name) %>% 
   tally(sort = TRUE) %>% 
-  View()
+  View(.)
 
 
 # ------------------------------------------------------------------------------
@@ -246,7 +248,6 @@ hist_map
 # ------------------------------------------------------------------------------
 #  Project the model into the future
 # ------------------------------------------------------------------------------
-
 # Download future projected climate data
 bio_cmip5 <- raster::getData('CMIP5', 
                             var = 'bio', 
