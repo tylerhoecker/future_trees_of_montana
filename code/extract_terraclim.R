@@ -19,7 +19,7 @@ point_sample <- foc_sp_sf %>%
   # this completely randomly b/c you'll lose a bunch of presences. Could first
   # use `group_by(foc_sp_PRES)` and then `slice_sample` so you pick a subset of 
   # size n from every group (in this case, two groups: 0,1).
-  slice_sample(n = 10) %>% 
+  # slice_sample(n = 10) %>% 
   # Split the dataframe into a list, to facilitate running function over list
   split(.,1:nrow(.))
 
