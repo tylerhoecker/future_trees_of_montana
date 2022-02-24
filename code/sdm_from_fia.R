@@ -28,7 +28,7 @@ using('tidyverse','sf','tmap','rFIA','USAboundaries','raster','terra','GGally','
 # ------------------------------------------------------------------------------
 # Pick out your focal species - do some a priori learnin'
 # ------------------------------------------------------------------------------
-foc_sp <- 'Picea pungens'
+foc_sp <- 'Pinus edulis' #'Juniperus osteosperma'  #'Picea pungens'
 
 # Example:
 # Picea pungens (blue spruce): https://pubs.usgs.gov/pp/p1650-a/pages/pipushrt.pdf 
@@ -37,7 +37,7 @@ foc_sp <- 'Picea pungens'
 # Group 1
 # Juniperus osteosperma (Utah juniper): https://pubs.usgs.gov/pp/p1650-a/pages/juostrim.pdf
 # Group 2
-# Quercus gambellii (Gambel oak): https://pubs.usgs.gov/pp/p1650-a/pages/gambtrim.pdf 
+# Quercus gambelii (Gambel oak): https://pubs.usgs.gov/pp/p1650-a/pages/gambtrim.pdf 
 # Group 3
 # Pinus edulis (pinyon pine): https://pubs.usgs.gov/pp/p1650-a/pages/piedtrim.pdf 
 
@@ -89,14 +89,14 @@ spp_ref <- read_csv('../data/REF_SPECIES.csv')
 spp_names <- spp_ref %>% 
   dplyr::select(SPCD, COMMON_NAME, GENUS, SPECIES) %>% 
   mutate(latin_name = paste(GENUS, SPECIES))
+
 # Match our focal species latin name to it's code 
 foc_spcd <- filter(spp_names, latin_name == foc_sp)[['SPCD']]
 
 # Check how many records of this species are present in the FIA databases from these states 
 left_join(fia_df_seed, spp_names) %>% 
   group_by(SPCD, COMMON_NAME, latin_name) %>% 
-  tally(sort = TRUE) %>% 
-  View(.)
+  tally(sort = TRUE) 
 
 
 # ------------------------------------------------------------------------------
@@ -114,7 +114,7 @@ fia_foc_sp <- fia_df_seed %>%
   # Group by PLT_CN (bit confusing... but PLT_CN will link us to CN in the PLOT table, which is the unique visit ID)
   group_by(PLOT, PLT_CN) %>% 
   # Max of presence indicator will summarize whether foc_sp present in each plot
-  summarise(foc_sp_PRES = as.factor(max(foc_sp_PRES)))
+  summarise(foc_sp_PRES = max(foc_sp_PRES))
 
 
 # ------------------------------------------------------------------------------
@@ -123,10 +123,13 @@ fia_foc_sp <- fia_df_seed %>%
 
 # Get the location information associated with these plots
 foc_sp_plot_coords <- fia_df[['PLOT']] %>% 
+  # group_by(PLOT_STATUS_CD) %>% 
+  # tally()
   dplyr::select(CN, PLOT, INVYR, LAT, LON) %>% 
   # Join our presence/absense data to a list of plots and their coordinates
   # Why left_join?
-  left_join(fia_foc_sp, ., by = c('PLT_CN' = 'CN', 'PLOT'='PLOT')) 
+  full_join(fia_foc_sp, ., by = c('PLT_CN' = 'CN', 'PLOT'='PLOT')) %>% 
+  mutate(foc_sp_PRES = ifelse(is.na(foc_sp_PRES), 0, foc_sp_PRES))
 
 # Make this a spatial object
 foc_sp_sf  <- st_as_sf(foc_sp_plot_coords, coords = c('LON','LAT'), crs = 4326) # coords must be in x, y order!
@@ -159,14 +162,11 @@ tm_shape(state_bounds, bbox = foc_sp_sf) +
 # WorldClim provides 19 'biologically meaningful' variables: https://www.worldclim.org/data/bioclim.html
 bio_hist <- raster::getData('worldclim', var = 'bio', res = 2.5, path = '../data/')
 
-# Once downloaded, read in like this (I changed the name of the directory manually)
+ # Once downloaded, read in like this (I changed the name of the directory manually)
 bio_hist <- list.files('../data/wc2-5/', 
                        pattern = '*.bil$', 
                        full.names = T) %>% 
   stack()
-
-# This can be slow, you may decide to save this as a Rdata object for quick access later
-foc_sp_bio <- terra::extract(bio_hist, foc_sp_sf)
 
 # Select some climate variables... this is important and there are lots of ways to do it
 # This is just a simplified example, picking a priori and checking for autocorrelation
@@ -174,13 +174,13 @@ foc_sp_bio <- terra::extract(bio_hist, foc_sp_sf)
 foc_sp_bio %>% 
   ggcorr(label = TRUE)
 
+# This can be slow, you may decide to save this as a Rdata object for quick access later
+foc_sp_bio <- terra::extract(bio_hist, foc_sp_sf)
 
 foc_sp_hist_sf <- foc_sp_bio %>% 
   as.data.frame() %>% 
   dplyr::select(temp_min = bio6, temp_seas = bio4, precip_dry = bio17) %>% 
-  cbind(foc_sp_sf, .) %>% 
-  mutate(temp_min = temp_min,
-         temp_seas = temp_seas)
+  cbind(foc_sp_sf, .) 
 
 # Map... looks reasonable?
 climate_map <- 
@@ -207,14 +207,12 @@ climate_map
 
 # Make a non-spatial dataframe 
 foc_sp_hist_df <- foc_sp_hist_sf %>% 
-  st_drop_geometry() %>% 
-  mutate(presence = as.numeric(as.character(foc_sp_PRES)))
-
+  st_drop_geometry() 
 
 # Fit a model
-foc_sp_glm <- glm(presence ~ temp_min + temp_seas + precip_dry, 
+foc_sp_glm <- glm(foc_sp_PRES ~ temp_min + temp_seas + precip_dry, 
                 data = foc_sp_hist_df,
-                family = binomial(link = "logit"))
+                family = binomial(link = "logit")) 
 
 summary(foc_sp_glm)
 
@@ -238,12 +236,35 @@ hist_space <- terra::predict(hist_preds, model = foc_sp_glm, type = 'response')
 hist_map <- 
   tm_shape(hist_space, bbox = pred_bounds, raster.downsample = FALSE) +
   tm_raster(title = 'Historical probability',
-            palette = 'PuRd', style = 'cont') +
+            palette = 'PuRd', 
+            style = 'cont',
+            breaks = seq(0, 0.2, by=.05)) +
   tm_shape(state_bounds) +
   tm_borders(col = 'black') +
   tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
   tm_dots(size = 0.12, shape = 1, border.lwd = 1.6) 
 hist_map
+
+# ------------------------------------------------------------------------------
+#  Reclassify prediction surface into binary
+# ------------------------------------------------------------------------------
+m <- c(0,mean(foc_sp_hist_df$foc_sp_PRES),0,  
+       mean(foc_sp_hist_df$foc_sp_PRES),1,1)
+rclmat <- matrix(m, ncol=3, byrow=TRUE)
+
+hist_binary <- reclassify(hist_space, rclmat)
+
+hist_map <- 
+  tm_shape(hist_binary, bbox = pred_bounds, raster.downsample = FALSE) +
+  tm_raster(title = 'Historical probability',
+            palette = 'PuRd', 
+            style = 'cont') +
+  tm_shape(state_bounds) +
+  tm_borders(col = 'black') +
+  tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
+  tm_dots(size = 0.12, shape = 1, border.lwd = 1.6) 
+hist_map
+
 
 # ------------------------------------------------------------------------------
 #  Project the model into the future
@@ -276,7 +297,9 @@ cmip5_space <- terra::predict(cmip5_preds, model = foc_sp_glm, type = 'response'
 cmip5_map <- 
   tm_shape(cmip5_space, bbox = pred_bounds) +
   tm_raster(title = 'Future probability',
-            palette = 'PuRd', style = 'cont') +
+            palette = 'PuRd', 
+            style = 'cont',
+            breaks = seq(0, 0.9, by=.1)) +
   tm_shape(state_bounds) +
   tm_borders(col = 'black') +
   tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
@@ -292,8 +315,7 @@ diff_map <-
   tm_shape(sdm_difference, bbox = pred_bounds) +
   tm_raster(title = 'Difference in probability',
             palette = 'RdGy', 
-            style = 'cont', 
-            breaks = seq(-.05, .05, by=.01)) +
+            style = 'cont') + #seq(-.05, .05, by=.01)
   tm_shape(state_bounds) +
   tm_borders(col = 'black') +
   tm_shape(filter(foc_sp_sf, foc_sp_PRES == 1)) +
