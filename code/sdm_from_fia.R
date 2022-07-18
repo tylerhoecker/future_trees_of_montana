@@ -114,7 +114,7 @@ fia_foc_sp <- fia_df_seed %>%
   # Group by PLT_CN (bit confusing... but PLT_CN will link us to CN in the PLOT table, which is the unique visit ID)
   group_by(PLOT, PLT_CN) %>% 
   # Max of presence indicator will summarize whether foc_sp present in each plot
-  summarise(foc_sp_PRES = max(foc_sp_PRES))
+  summarise(foc_sp_PRES = max(foc_sp_PRES)) 
 
 
 # ------------------------------------------------------------------------------
