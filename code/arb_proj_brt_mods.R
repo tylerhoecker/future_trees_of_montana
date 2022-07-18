@@ -27,7 +27,7 @@ using('tidyverse','sf','tmap','rFIA','USAboundaries','raster','terra','GGally', 
 
 
 
-setwd("C:/Users/sv181974/Box/Arboretum_project/script")
+setwd("TYLERS WORKING DIRECTORY!!!!")
 # ------------------------------------------------------------------------------
 # Pick out your focal species - do some a priori learnin'
 # ------------------------------------------------------------------------------
